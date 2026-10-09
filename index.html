@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Case Sathi AI - Patient Case-Taking & Care Assistant</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Babel for inline JSX compilation -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 antialiased">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useRef, useMemo, useEffect } = React;
+
+    // Helper to render Lucide icons in React without module bundler
+    const LucideIcon = ({ name, size = 18, className = "" }) => {
+      const containerRef = useRef(null);
+      useEffect(() => {
+        if (containerRef.current && window.lucide) {
+          containerRef.current.innerHTML = `<i data-lucide="${name}"></i>`;
+          window.lucide.createIcons({
+            root: containerRef.current,
+            attrs: {
+              width: size,
+              height: size,
+              class: className
+            }
+          });
+        }
+      }, [name, size, className]);
+      return <span ref={containerRef} className="inline-flex items-center justify-center shrink-0" />;
+    };
+
+    const Mic = (p) => <LucideIcon name="mic" {...p} />;
+    const MicOff = (p) => <LucideIcon name="mic-off" {...p} />;
+    const Stethoscope = (p) => <LucideIcon name="stethoscope" {...p} />;
+    const User = (p) => <LucideIcon name="user" {...p} />;
+    const Pill = (p) => <LucideIcon name="pill" {...p} />;
+    const Home = (p) => <LucideIcon name="home" {...p} />;
+    const CheckCircle2 = (p) => <LucideIcon name="check-circle-2" {...p} />;
+    const AlertTriangle = (p) => <LucideIcon name="alert-triangle" {...p} />;
+    const AlertCircle = (p) => <LucideIcon name="alert-circle" {...p} />;
+    const Send = (p) => <LucideIcon name="send" {...p} />;
+    const ShieldCheck = (p) => <LucideIcon name="shield-check" {...p} />;
+    const ExternalLink = (p) => <LucideIcon name="external-link" {...p} />;
+    const Clock = (p) => <LucideIcon name="clock" {...p} />;
+    const ArrowRight = (p) => <LucideIcon name="arrow-right" {...p} />;
+    const FileText = (p) => <LucideIcon name="file-text" {...p} />;
+    const Search = (p) => <LucideIcon name="search" {...p} />;
+
+    const NAVY = "#1e3a8a", INK = "#0f172a", TEAL = "#0d9488";
+
+    /* ---------- Mock data ---------- */
+    const mkCase = (id, name, age, sex, type, status, urgent, s, missing, tl) => ({ id, name, age, sex, type, status, urgent, ai: true, summary: s, missing, timeline: tl, notes: "", followUps: [] });
+    const SEED = [
+      mkCase("C-101", "Anita Verma", 34, "F", "Headache", "Awaiting Review", false,
+        { complaint: "Throbbing headache, right side", history: "Recurrent episodes for 2 years; light sensitivity and nausea.", severity: "7/10", duration: "2 days", allergies: "None reported", meds: "Paracetamol PRN" },
+        ["Family history"], [["10:05 AM", "Patient registered"], ["10:10 AM", "AI interview completed"]]),
+      mkCase("C-102", "Ramesh Kumar", 52, "M", "Abdominal Pain", "Needs Info", true,
+        { complaint: "Upper abdominal pain, burning", history: "Pain after meals for 1 week. Reports vomiting with blood once yesterday.", severity: "8/10", duration: "1 week", allergies: "Not collected", meds: "Ibuprofen regularly" },
+        ["Allergies", "Alcohol use"], [["09:40 AM", "Patient registered"], ["09:50 AM", "AI interview completed"], ["09:51 AM", "Red flag raised: blood in vomit"]]),
+      mkCase("C-103", "Sunita Devi", 61, "F", "Persistent Cough", "Verified", false,
+        { complaint: "Dry cough, worse at night", history: "3 weeks, mild breathlessness on stairs. Non-smoker.", severity: "4/10", duration: "3 weeks", allergies: "Penicillin", meds: "Cetirizine" },
+        [], [["08:30 AM", "Patient registered"], ["08:36 AM", "AI interview completed"], ["08:45 AM", "Doctor verified"]]),
+      mkCase("C-104", "Imran Sheikh", 28, "M", "Chest", "Awaiting Review", true,
+        { complaint: "Chest tightness while walking", history: "Started this morning, sweating reported.", severity: "6/10", duration: "4 hours", allergies: "None", meds: "None" },
+        ["Family history", "Prior episodes"], [["11:02 AM", "Patient registered"], ["11:08 AM", "AI interview completed"], ["11:08 AM", "Red flag raised: chest tightness"]]),
+    ];
+
+    const DEMOS = {
+      Headache: { name: "Anita Verma", age: "34", sex: "F", text: "I have a throbbing headache on my right side since two days" },
+      "Abdominal Pain": { name: "Ramesh Kumar", age: "52", sex: "M", text: "Severe stomach pain with burning after meals" },
+      "Persistent Cough": { name: "Sunita Devi", age: "61", sex: "F", text: "Dry cough for three weeks, worse at night" },
+    };
+
+    /* ---------- Red flags ---------- */
+    const FLAGS = [
+      [/sudden.*(severe|worst).*headache|worst headache|thunderclap/i, "Sudden severe headache"],
+      [/chest (tight|pain|pressure)|tightness in (my )?chest|seene mein/i, "Chest tightness / pain"],
+      [/blood.*(vomit|ulti)|vomit.*blood|ulti.*khoon/i, "Blood in vomit"],
+      [/(can'?t|cannot|difficulty|trouble) breath|saans.*(nahi|takleef)/i, "Difficulty breathing"],
+      [/faint|unconscious|behosh|slurred|weakness (on|in) one side/i, "Fainting / neurological change"],
+      [/coughing blood|blood.*(cough|sputum)|khoon.*khansi/i, "Blood with cough"],
+    ];
+    const detectFlags = (t) => FLAGS.filter(([r]) => r.test(t)).map(([, l]) => l);
+
+    /* ---------- Adaptive questions ---------- */
+    const L = {
+      en: { steps: ["Registration", "Language", "Complaint", "Adaptive Q&A", "Summary"], speak: "Speak", listening: "Listening…", next: "Next" },
+      hi: { steps: ["पंजीकरण", "भाषा", "शिकायत", "प्रश्न-उत्तर", "सारांश"], speak: "बोलें", listening: "सुन रहे हैं…", next: "आगे" },
+      hn: { steps: ["Registration", "Bhasha", "Shikayat", "Sawal-Jawab", "Summary"], speak: "Bolein", listening: "Sun rahe hain…", next: "Aage" },
+    };
+    const Q = {
+      onset: { label: "Onset", en: "When did this start, and did it begin suddenly or slowly?", hi: "यह कब शुरू हुआ? अचानक या धीरे-धीरे?", hn: "Yeh kab shuru hua? Achanak ya dheere-dheere?" },
+      character: { label: "Pain / symptom character", en: "How would you describe it (throbbing, sharp, burning, dull, dry/wet)?", hi: "इसे कैसे बताएँगे (धड़कता, तेज़, जलन, हल्का)?", hn: "Isse kaise describe karenge (throbbing, sharp, jalan, halka)?" },
+      severity: { label: "Severity (1–10)", en: "On a scale of 1 to 10, how severe is it?", hi: "1 से 10 के पैमाने पर यह कितना गंभीर है?", hn: "1 se 10 ke scale par kitna severe hai?" },
+      associated: { label: "Associated symptoms", en: "Any other symptoms with it (fever, nausea, vomiting, breathlessness)?", hi: "साथ में कोई और लक्षण (बुखार, उल्टी, साँस फूलना)?", hn: "Saath mein aur koi symptom (bukhar, ulti, saans phoolna)?" },
+      prior: { label: "Prior episodes", en: "Have you had this before? What helped?", hi: "क्या पहले भी हुआ है? क्या आराम मिला?", hn: "Kya pehle bhi hua hai? Kya se aaram mila?" },
+      allergies: { label: "Allergies", en: "Do you have any drug or food allergies?", hi: "क्या आपको किसी दवा या खाने से एलर्जी है?", hn: "Kya aapko kisi dawa ya khane se allergy hai?" },
+      meds: { label: "Current medicines", en: "Which medicines are you taking right now?", hi: "अभी कौन सी दवाइयाँ ले रहे हैं?", hn: "Abhi kaun si dawaiyan le rahe hain?" },
+      trigger: { label: "Triggers", en: "Does light, noise, stress or lack of sleep make it worse?", hi: "क्या रोशनी, शोर या तनाव से बढ़ता है?", hn: "Kya light, shor ya stress se badhta hai?" },
+      meals: { label: "Relation to meals", en: "Is it related to meals, and has your stool or vomit looked unusual?", hi: "क्या खाने से संबंधित है? मल/उल्टी में कुछ असामान्य?", hn: "Kya khane se related hai? Stool/ulti mein kuch unusual?" },
+      sputum: { label: "Cough type", en: "Is the cough dry or with phlegm? Any blood, night sweats or smoking?", hi: "खाँसी सूखी है या बलगम वाली? खून, रात में पसीना, धूम्रपान?", hn: "Khansi dry hai ya balgam wali? Khoon, night sweats, smoking?" },
+    };
+    const buildQs = (c) => {
+      const extra = /head|sir|migraine/i.test(c) ? ["trigger"] : /stomach|abdom|pet|belly/i.test(c) ? ["meals"] : /cough|khansi|breath/i.test(c) ? ["sputum"] : [];
+      return ["onset", "character", ...extra, "severity", "associated", "prior", "allergies", "meds"];
+    };
+
+    /* ---------- Pharmacy data ---------- */
+    const DRUGS = {
+      paracetamol: { simple: "Reduces fever and mild pain. Usually taken after food, one tablet every 6–8 hours when needed.", generic: "Generic paracetamol 500mg (≈ ₹2–3/tab)", brand: "Dolo 650 / Crocin", side: ["Rare: skin rash", "Liver harm with overdose or heavy alcohol"], pre: "Do not exceed 4 g in 24 hours." },
+      amoxicillin: { simple: "An antibiotic for bacterial infections. Take at equal intervals and finish the full course unless your doctor says otherwise.", generic: "Generic amoxicillin 250mg (≈ ₹5–7/cap)", brand: "Novamox / Mox", side: ["Diarrhoea, nausea", "Allergic rash (stop and call doctor)"], pre: "Tell your doctor if you are allergic to penicillin." },
+      cetirizine: { simple: "Relieves allergy symptoms like sneezing and itching. Usually taken once a day at night.", generic: "Generic cetirizine 10mg (≈ ₹1–2/tab)", brand: "Okacet / Cetzine", side: ["Drowsiness", "Dry mouth"], pre: "Avoid driving if you feel sleepy." },
+      pantoprazole: { simple: "Reduces stomach acid. Usually taken on an empty stomach 30 minutes before breakfast.", generic: "Generic pantoprazole 40mg (≈ ₹3–5/tab)", brand: "Pan 40 / Pantocid", side: ["Headache", "Loose stools"], pre: "Long-term use needs doctor review." },
+      ibuprofen: { simple: "Reduces pain and inflammation. Take with or after food.", generic: "Generic ibuprofen 400mg (≈ ₹2/tab)", brand: "Brufen", side: ["Stomach irritation", "Can raise blood pressure"], pre: "Avoid with stomach ulcers or kidney problems unless doctor advises." },
+    };
+    const SHOPS = [
+      ["Tata 1mg", "https://www.1mg.com/search/all?name="],
+      ["PharmEasy", "https://pharmeasy.in/search/all?name="],
+      ["Netmeds", "https://www.netmeds.com/catalogsearch/result?q="],
+    ];
+
+    /* ---------- Shared bits ---------- */
+    const Btn = ({ children, onClick, kind = "primary", disabled, className = "" }) => {
+      const k = { primary: "bg-blue-900 text-white hover:bg-blue-800", teal: "bg-teal-600 text-white hover:bg-teal-700", ghost: "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50", green: "bg-green-600 text-white hover:bg-green-700" }[kind];
+      return <button disabled={disabled} onClick={onClick} className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-40 ${k} ${className}`}>{children}</button>;
+    };
+    const Card = ({ children, className = "" }) => <div className={`rounded-xl bg-white border border-slate-200 p-5 ${className}`}>{children}</div>;
+    const Badge = ({ s }) => {
+      const m = { "Awaiting Review": "bg-amber-100 text-amber-800", Verified: "bg-green-100 text-green-800", "Needs Info": "bg-red-100 text-red-800" };
+      return <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${m[s]}`}>{s}</span>;
+    };
+
+    /* Text input with working dictation */
+    function VoiceInput({ value, onChange, placeholder, lang = "en", multiline = true, onEnter }) {
+      const [on, setOn] = useState(false);
+      const [note, setNote] = useState("");
+      const rec = useRef(null);
+      const supported = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
+      const toggle = () => {
+        if (!supported) return setNote("Voice not supported in this browser. Please type instead.");
+        if (on) { rec.current?.stop(); return; }
+        const R = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const r = new R();
+        r.lang = lang === "hi" ? "hi-IN" : "en-IN";
+        r.interimResults = false;
+        r.onresult = (e) => onChange((value ? value + " " : "") + e.results[0][0].transcript);
+        r.onerror = (e) => { setNote("Mic error: " + e.error + ". Type instead."); setOn(false); };
+        r.onend = () => setOn(false);
+        rec.current = r; setNote(""); setOn(true); r.start();
+      };
+      const Tag = multiline ? "textarea" : "input";
+      return (
+        <div>
+          <div className="flex gap-2 items-start">
+            <Tag rows={multiline ? 3 : undefined} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && onEnter) { e.preventDefault(); onEnter(); } }}
+              className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+            <button onClick={toggle} aria-label="Speak / Dictate" className={`rounded-lg p-3 text-white ${on ? "bg-red-600 animate-pulse" : "bg-teal-600 hover:bg-teal-700"}`}>
+              {on ? <MicOff size={18} /> : <Mic size={18} />}
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">{on ? L[lang === "hi" ? "hi" : "en"].listening : note || "🎤 Tap the mic to dictate, or type."}</p>
+        </div>
+      );
+    }
+
+    /* ---------- Landing ---------- */
+    function Landing({ go, startDemo }) {
+      return (
+        <div className="space-y-8">
+          <div className="rounded-2xl p-8 md:p-12 text-white" style={{ background: `linear-gradient(135deg, ${INK}, ${NAVY})` }}>
+            <div className="flex items-center gap-3 mb-4"><Stethoscope size={36} className="text-teal-400" /><h1 className="text-3xl md:text-4xl font-bold tracking-tight">CASE SATHI AI</h1></div>
+            <p className="text-teal-300 text-lg mb-2">Intelligent Patient Case-Taking &amp; Care Assistant</p>
+            <p className="text-xl md:text-2xl font-light max-w-2xl">Let the patient speak. Let AI structure the story. Let the doctor decide.</p>
+            <p className="mt-4 max-w-2xl text-slate-300 text-sm">Patients describe their problem by voice or text in English, Hindi or Hinglish. The assistant asks adaptive follow-ups, highlights urgent responses, and hands the doctor a structured summary to verify.</p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Btn kind="teal" onClick={() => go("interview")}>Start New Interview</Btn>
+              <Btn kind="ghost" onClick={() => go("doctor")}>Doctor Dashboard</Btn>
+              <Btn kind="ghost" onClick={() => go("pharmacy")}>Prescription &amp; Pharmacy Hub</Btn>
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <Card>
+              <h3 className="font-semibold text-slate-900 mb-3">Traditional manual flow</h3>
+              {["Patient waits in queue", "Doctor asks every question from scratch", "Handwritten notes, gaps missed", "~10 min of consult spent on history"].map((t, i) => <div key={i} className="flex items-center gap-2 text-sm text-slate-600 py-1"><AlertCircle size={16} className="text-amber-500 shrink-0" />{t}</div>)}
+            </Card>
+            <Card className="border-teal-300">
+              <h3 className="font-semibold text-slate-900 mb-3">CASE SATHI AI flow</h3>
+              {["Patient speaks in own language", "Adaptive questions fill the gaps", "Red flags highlighted for clinician", "Doctor reviews a structured summary and verifies"].map((t, i) => <div key={i} className="flex items-center gap-2 text-sm text-slate-700 py-1"><CheckCircle2 size={16} className="text-teal-600 shrink-0" />{t}</div>)}
+            </Card>
+          </div>
+
+          <Card>
+            <h3 className="font-semibold text-slate-900 mb-1">Quick demo cases</h3>
+            <p className="text-sm text-slate-500 mb-3">Loads a patient into the interview, ready to run.</p>
+            <div className="grid sm:grid-cols-3 gap-3">
+              {Object.keys(DEMOS).map((k) => <button key={k} onClick={() => startDemo(k)} className="flex items-center justify-between rounded-lg border border-slate-200 p-4 text-left hover:border-teal-500 hover:bg-teal-50"><span className="font-medium text-slate-800">{k}</span><ArrowRight size={16} className="text-teal-600" /></button>)}
+            </div>
+          </Card>
+        </div>
+      );
+    }
+
+    /* ---------- Interview ---------- */
+    function Interview({ seed, addCase, go }) {
+      const [step, setStep] = useState(seed ? 3 : 1);
+      const [reg, setReg] = useState({ name: seed?.name || "", age: seed?.age || "", sex: seed?.sex || "" });
+      const [lang, setLang] = useState("en");
+      const [complaint, setComplaint] = useState(seed?.text || "");
+      const [qs, setQs] = useState(seed ? buildQs(seed.text) : []);
+      const [qi, setQi] = useState(0);
+      const [ans, setAns] = useState({});
+      const [draft, setDraft] = useState("");
+      const [saved, setSaved] = useState(false);
+      const t = L[lang];
+
+      const all = complaint + " " + Object.values(ans).join(" ");
+      const flags = useMemo(() => detectFlags(all), [all]);
+      const fields = ["onset", "character", "severity", "associated", "prior", "allergies", "meds"];
+      const done = fields.filter((f) => ans[f]).length + (complaint ? 1 : 0);
+      const pct = Math.round((done / (fields.length + 1)) * 100);
+
+      const submitComplaint = () => { if (!complaint.trim()) return; setQs(buildQs(complaint)); setQi(0); setStep(4); };
+      const submitAns = () => {
+        const key = qs[qi];
+        if (key === "severity" && !/^(10|[1-9])$/.test(draft.trim())) return alert("Please enter a number from 1 to 10.");
+        if (!draft.trim()) return;
+        setAns({ ...ans, [key]: draft.trim() }); setDraft("");
+        qi + 1 >= qs.length ? setStep(5) : setQi(qi + 1);
+      };
+      const skip = () => { setDraft(""); qi + 1 >= qs.length ? setStep(5) : setQi(qi + 1); };
+
+      const save = () => {
+        const missing = fields.filter((f) => !ans[f]).map((f) => Q[f].label);
+        const urgent = flags.length > 0;
+        addCase({
+          id: "C-" + (200 + Math.floor(Math.random() * 700)), name: reg.name || "Walk-in patient", age: reg.age || "–", sex: reg.sex || "–",
+          type: complaint.slice(0, 24), status: missing.length ? "Needs Info" : "Awaiting Review", urgent, ai: true, notes: "", followUps: [],
+          summary: { complaint, history: [ans.onset, ans.character, ans.associated, ans.prior].filter(Boolean).join(". "), severity: ans.severity ? ans.severity + "/10" : "Not collected", duration: ans.onset || "Not collected", allergies: ans.allergies || "Not collected", meds: ans.meds || "Not collected" },
+          missing, timeline: [["Now", "Patient registered"], ["Now", "AI interview completed"], ...(urgent ? [["Now", "Red flag raised: " + flags.join(", ")]] : [])],
+        });
+        setSaved(true);
+      };
+
+      return (
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {t.steps.map((s, i) => <div key={i} className={`flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ${step === i + 1 ? "bg-blue-900 text-white" : step > i + 1 ? "bg-teal-100 text-teal-800" : "bg-slate-200 text-slate-600"}`}>{step > i + 1 ? <CheckCircle2 size={13} /> : <span>{i + 1}</span>}{s}</div>)}
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-2 space-y-4">
+              {flags.length > 0 && (
+                <div className="rounded-xl border border-red-300 bg-red-50 p-4 flex gap-3">
+                  <AlertTriangle className="text-red-600 shrink-0" />
+                  <div><p className="font-semibold text-red-800">Attention required for clinician assessment</p><p className="text-sm text-red-700">Flagged: {flags.join(", ")}. This is a prompt for review, not a diagnosis.</p></div>
+                </div>
+              )}
+
+              {step === 1 && (
+                <Card className="space-y-3">
+                  <h2 className="font-semibold text-lg">Patient registration</h2>
+                  <input value={reg.name} onChange={(e) => setReg({ ...reg, name: e.target.value })} placeholder="Full name" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  <div className="flex gap-3">
+                    <input value={reg.age} onChange={(e) => setReg({ ...reg, age: e.target.value })} placeholder="Age" className="w-24 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    {["M", "F", "Other"].map((s) => <button key={s} onClick={() => setReg({ ...reg, sex: s })} className={`rounded-lg border px-4 text-sm ${reg.sex === s ? "bg-blue-900 text-white" : "bg-white"}`}>{s}</button>)}
+                  </div>
+                  <Btn disabled={!reg.name} onClick={() => setStep(2)}>Continue</Btn>
+                </Card>
+              )}
+
+              {step === 2 && (
+                <Card className="space-y-3">
+                  <h2 className="font-semibold text-lg">Choose your language</h2>
+                  <div className="flex flex-wrap gap-3">
+                    {[["en", "English"], ["hi", "हिन्दी"], ["hn", "Hinglish"]].map(([k, n]) => <button key={k} onClick={() => setLang(k)} className={`rounded-lg border px-5 py-3 ${lang === k ? "border-teal-600 bg-teal-50 font-semibold" : "bg-white"}`}>{n}</button>)}
+                  </div>
+                  <Btn onClick={() => setStep(3)}>{t.next}</Btn>
+                </Card>
+              )}
+
+              {step === 3 && (
+                <Card className="space-y-3">
+                  <h2 className="font-semibold text-lg">{lang === "hi" ? "आपको क्या तकलीफ़ है?" : lang === "hn" ? "Aapko kya takleef hai?" : "What brings you in today?"}</h2>
+                  <VoiceInput lang={lang} value={complaint} onChange={setComplaint} placeholder="e.g. I have a headache since two days" />
+                  <Btn kind="teal" disabled={!complaint.trim()} onClick={submitComplaint}><Send size={16} />{t.next}</Btn>
+                </Card>
+              )}
+
+              {step === 4 && (
+                <Card className="space-y-3">
+                  <p className="text-xs text-slate-500">Question {qi + 1} of {qs.length}</p>
+                  <h2 className="font-semibold text-lg">{Q[qs[qi]][lang]}</h2>
+                  {qs[qi] === "severity" && (
+                    <div className="flex flex-wrap gap-1">{[1,2,3,4,5,6,7,8,9,10].map((n) => <button key={n} onClick={() => setDraft(String(n))} className={`h-9 w-9 rounded-md border text-sm ${draft === String(n) ? "bg-blue-900 text-white" : "bg-white"}`}>{n}</button>)}</div>
+                  )}
+                  <VoiceInput lang={lang} value={draft} onChange={setDraft} placeholder="Type or dictate your answer" onEnter={submitAns} />
+                  <div className="flex gap-2"><Btn kind="teal" onClick={submitAns}>{t.next}</Btn><Btn kind="ghost" onClick={skip}>Skip</Btn></div>
+                </Card>
+              )}
+
+              {step === 5 && (
+                <Card className="space-y-3">
+                  <h2 className="font-semibold text-lg">Preliminary case summary</h2>
+                  <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">AI-generated. Requires clinician verification. Not a diagnosis.</div>
+                  <dl className="grid sm:grid-cols-2 gap-3 text-sm">
+                    {[["Patient", `${reg.name || "–"}, ${reg.age || "–"} ${reg.sex}`], ["Chief complaint", complaint], ["Onset / duration", ans.onset], ["Character", ans.character], ["Severity", ans.severity && ans.severity + "/10"], ["Associated symptoms", ans.associated], ["Prior episodes", ans.prior], ["Allergies", ans.allergies], ["Current medicines", ans.meds]].map(([k, v]) => (
+                      <div key={k} className="rounded-lg bg-slate-50 p-3"><dt className="text-xs text-slate-500">{k}</dt><dd className="text-slate-900">{v || <span className="text-amber-600">Not collected</span>}</dd></div>
+                    ))}
+                  </dl>
+                  {flags.length > 0 && <p className="text-sm text-red-700 font-medium">Urgent attention flag: {flags.join(", ")}</p>}
+                  {saved ? (
+                    <div className="flex items-center gap-3"><span className="text-green-700 text-sm flex items-center gap-1"><CheckCircle2 size={16} />Sent to doctor dashboard</span><Btn onClick={() => go("doctor")}>Open dashboard</Btn></div>
+                  ) : <Btn kind="teal" onClick={save}>Send to doctor for review</Btn>}
+                </Card>
+              )}
+            </div>
+
+            <Card className="h-fit">
+              <div className="flex items-baseline justify-between"><h3 className="font-semibold">Case completeness</h3><span className="text-2xl font-bold" style={{ color: TEAL }}>{pct}%</span></div>
+              <div className="h-2 rounded-full bg-slate-200 my-3"><div className="h-2 rounded-full bg-teal-600 transition-all" style={{ width: pct + "%" }} /></div>
+              <ul className="space-y-1.5 text-sm">
+                <li className="flex items-center gap-2">{complaint ? <CheckCircle2 size={15} className="text-green-600" /> : <AlertCircle size={15} className="text-amber-500" />}Chief complaint</li>
+                {fields.map((f) => <li key={f} className="flex items-center gap-2">{ans[f] ? <CheckCircle2 size={15} className="text-green-600" /> : <AlertCircle size={15} className="text-amber-500" />}<span className={ans[f] ? "" : "text-slate-500"}>{Q[f].label}</span></li>)}
+              </ul>
+            </Card>
+          </div>
+        </div>
+      );
+    }
+
+    /* ---------- Doctor ---------- */
+    function Doctor({ cases, setCases }) {
+      const [filter, setFilter] = useState("All");
+      const [sel, setSel] = useState(null);
+      const [fu, setFu] = useState("");
+      const list = cases.filter((c) => filter === "All" || c.status === filter);
+      const cur = cases.find((c) => c.id === sel);
+      const upd = (id, patch) => setCases(cases.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+      const stamp = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+      const metrics = [["Total cases", cases.length], ["AI-assisted", cases.filter((c) => c.ai).length], ["Pending review", cases.filter((c) => c.status !== "Verified").length], ["Flagged urgent", cases.filter((c) => c.urgent).length]];
+
+      if (cur) return (
+        <div className="space-y-4">
+          <Btn kind="ghost" onClick={() => setSel(null)}>Back to cases</Btn>
+          <div className="grid lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-2 space-y-4">
+              <Card>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="font-semibold text-lg">{cur.name} <span className="text-slate-500 font-normal text-sm">{cur.age}, {cur.sex} · {cur.id}</span></h2>
+                  <Badge s={cur.status} />
+                </div>
+                {cur.urgent && <div className="mb-3 rounded-lg bg-red-50 border border-red-300 p-3 text-sm text-red-800 flex gap-2"><AlertTriangle size={16} />Attention required for clinician assessment</div>}
+                <dl className="grid sm:grid-cols-2 gap-3 text-sm">
+                  {[["Chief complaint", cur.summary.complaint], ["History", cur.summary.history], ["Severity", cur.summary.severity], ["Duration", cur.summary.duration], ["Allergies", cur.summary.allergies], ["Current medicines", cur.summary.meds]].map(([k, v]) => <div key={k} className="rounded-lg bg-slate-50 p-3"><dt className="text-xs text-slate-500">{k}</dt><dd>{v || "–"}</dd></div>)}
+                </dl>
+              </Card>
+              <Card>
+                <h3 className="font-semibold mb-2">Doctor notes</h3>
+                <textarea rows={4} value={cur.notes} onChange={(e) => upd(cur.id, { notes: e.target.value })} placeholder="Edit or add clinical notes before verifying…" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                <div className="mt-3 flex items-center gap-3">
+                  {cur.status === "Verified" ? <span className="text-green-700 flex items-center gap-1 text-sm"><ShieldCheck size={16} />Verified by clinician</span>
+                    : <Btn kind="green" onClick={() => upd(cur.id, { status: "Verified", timeline: [...cur.timeline, [stamp(), "Doctor verified"]] })}><ShieldCheck size={16} />Mark as Verified</Btn>}
+                </div>
+              </Card>
+              <Card>
+                <h3 className="font-semibold mb-2">Missing information</h3>
+                {cur.missing.length ? <div className="flex flex-wrap gap-2 mb-3">{cur.missing.map((m) => <span key={m} className="rounded-full bg-amber-100 text-amber-800 text-xs px-3 py-1 flex items-center gap-1"><AlertCircle size={12} />{m}</span>)}</div> : <p className="text-sm text-green-700 mb-3">No gaps identified.</p>}
+                <div className="flex gap-2">
+                  <input value={fu} onChange={(e) => setFu(e.target.value)} placeholder="Ask patient a direct follow-up question" className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  <Btn kind="teal" disabled={!fu.trim()} onClick={() => { upd(cur.id, { followUps: [...cur.followUps, fu], status: cur.status === "Verified" ? cur.status : "Needs Info", timeline: [...cur.timeline, [stamp(), "Follow-up sent: " + fu]] }); setFu(""); }}><Send size={14} />Send</Btn>
+                </div>
+                {cur.followUps.map((f, i) => <p key={i} className="mt-2 text-sm bg-slate-50 rounded p-2">Sent to patient: {f}</p>)}
+              </Card>
+            </div>
+            <Card className="h-fit">
+              <h3 className="font-semibold mb-3">Workflow timeline</h3>
+              <ol className="space-y-3 border-l-2 border-teal-200 pl-4">
+                {cur.timeline.map(([t, e], i) => <li key={i} className="text-sm"><span className="flex items-center gap-1 text-xs text-slate-500"><Clock size={11} />{t}</span>{e}</li>)}
+              </ol>
+            </Card>
+          </div>
+        </div>
+      );
+
+      return (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {metrics.map(([k, v], i) => <Card key={k} className={i === 3 ? "border-red-200" : ""}><p className="text-sm text-slate-500">{k}</p><p className={`text-3xl font-bold ${i === 3 ? "text-red-600" : "text-slate-900"}`}>{v}</p></Card>)}
+          </div>
+          <Card className="overflow-x-auto">
+            <div className="flex flex-wrap gap-2 mb-3">
+              {["All", "Awaiting Review", "Verified", "Needs Info"].map((f) => <button key={f} onClick={() => setFilter(f)} className={`rounded-full px-3 py-1 text-sm ${filter === f ? "bg-blue-900 text-white" : "bg-slate-100 text-slate-700"}`}>{f}</button>)}
+            </div>
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-slate-500 border-b"><th className="py-2">Patient</th><th>Complaint</th><th>Status</th><th>Alert</th><th /></tr></thead>
+              <tbody>
+                {list.map((c) => (
+                  <tr key={c.id} className="border-b last:border-0 hover:bg-slate-50">
+                    <td className="py-3"><p className="font-medium">{c.name}</p><p className="text-xs text-slate-500">{c.age}, {c.sex} · {c.id}</p></td>
+                    <td>{c.summary.complaint}</td><td><Badge s={c.status} /></td>
+                    <td>{c.urgent && <span className="flex items-center gap-1 text-red-600 text-xs"><AlertTriangle size={13} />Urgent</span>}</td>
+                    <td className="text-right"><Btn kind="ghost" onClick={() => setSel(c.id)}>Review</Btn></td>
+                  </tr>
+                ))}
+                {!list.length && <tr><td colSpan={5} className="py-6 text-center text-slate-500">No cases with this status.</td></tr>}
+              </tbody>
+            </table>
+          </Card>
+        </div>
+      );
+    }
+
+    /* ---------- Pharmacy ---------- */
+    function Pharmacy() {
+      const [txt, setTxt] = useState("Paracetamol 500mg\nAmoxicillin 250mg");
+      const [rows, setRows] = useState([]);
+      const [fileName, setFileName] = useState("");
+      const analyze = () => setRows(txt.split(/\n|,/).map((l) => l.trim()).filter(Boolean).map((l) => {
+        const key = Object.keys(DRUGS).find((k) => l.toLowerCase().includes(k));
+        return { line: l, d: key ? DRUGS[key] : null };
+      }));
+      return (
+        <div className="space-y-4">
+          <Card className="space-y-3">
+            <h2 className="font-semibold text-lg">Prescription analyzer</h2>
+            <label className="flex items-center gap-2 rounded-lg border border-dashed border-slate-300 p-3 text-sm cursor-pointer hover:bg-slate-50">
+              <FileText size={16} />{fileName || "Upload prescription image or PDF (demo: enter medicines below to analyze)"}
+              <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => setFileName(e.target.files[0]?.name || "")} />
+            </label>
+            <VoiceInput multiline value={txt} onChange={setTxt} placeholder="One medicine per line, e.g. Paracetamol 500mg" />
+            <Btn kind="teal" onClick={analyze}><Search size={16} />Explain my medicines</Btn>
+          </Card>
+          {rows.map((r, i) => (
+            <Card key={i}>
+              <h3 className="font-semibold text-slate-900 flex items-center gap-2"><Pill size={18} className="text-teal-600" />{r.line}</h3>
+              {r.d ? (
+                <div className="mt-3 grid md:grid-cols-2 gap-4 text-sm">
+                  <div className="space-y-2">
+                    <div className="rounded-lg bg-teal-50 p-3"><p className="text-xs text-teal-800 font-medium">In simple words</p>{r.d.simple}</div>
+                    <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Common brand: {r.d.brand}</p><p className="font-medium">Cheaper generic: {r.d.generic}</p></div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="rounded-lg bg-amber-50 p-3"><p className="text-xs text-amber-800 font-medium">Common side effects</p><ul className="list-disc pl-4">{r.d.side.map((s) => <li key={s}>{s}</li>)}</ul></div>
+                    <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Precaution</p>{r.d.pre}</div>
+                  </div>
+                </div>
+              ) : <p className="mt-2 text-sm text-amber-700">Not in the demo database. Ask your pharmacist or doctor about this medicine.</p>}
+              <div className="mt-3 flex flex-wrap gap-2">
+                {SHOPS.map(([n, u]) => <a key={n} href={u + encodeURIComponent(r.line.replace(/\d+\s?mg/i, "").trim())} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">Order on {n}<ExternalLink size={13} /></a>)}
+              </div>
+            </Card>
+          ))}
+          {rows.length > 0 && <p className="text-xs text-slate-500">Follow your doctor's prescription. Do not switch to a generic without checking with your doctor or pharmacist.</p>}
+        </div>
+      );
+    }
+
+    /* ---------- App ---------- */
+    function App() {
+      const [mode, setMode] = useState("landing");
+      const [cases, setCases] = useState(SEED);
+      const [seed, setSeed] = useState(null);
+      const [run, setRun] = useState(0);
+      const nav = [["landing", "Home", Home], ["interview", "Patient Interview", User], ["doctor", "Doctor Dashboard", Stethoscope], ["pharmacy", "Pharmacy Hub", Pill]];
+      const go = (m) => { if (m === "interview") setSeed(null); setRun((r) => r + 1); setMode(m); };
+      const startDemo = (k) => { setSeed(DEMOS[k]); setRun((r) => r + 1); setMode("interview"); };
+
+      return (
+        <div className="min-h-screen flex flex-col" style={{ background: "#f8fafc", color: INK }}>
+          <header style={{ background: INK }} className="sticky top-0 z-10">
+            <div className="mx-auto max-w-6xl px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+              <button onClick={() => go("landing")} className="flex items-center gap-2 text-white font-bold"><Stethoscope className="text-teal-400" />CASE SATHI AI</button>
+              <nav className="flex flex-wrap gap-1">
+                {nav.map(([k, n, I]) => <button key={k} onClick={() => (k === "interview" ? go(k) : (setMode(k)))} className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm ${mode === k ? "bg-teal-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}><I size={15} />{n}</button>)}
+              </nav>
+            </div>
+          </header>
+          <main className="mx-auto max-w-6xl w-full px-4 py-6 flex-1">
+            {mode === "landing" && <Landing go={go} startDemo={startDemo} />}
+            {mode === "interview" && <Interview key={run} seed={seed} addCase={(c) => setCases((p) => [c, ...p])} go={go} />}
+            {mode === "doctor" && <Doctor cases={cases} setCases={setCases} />}
+            {mode === "pharmacy" && <Pharmacy />}
+          </main>
+          <footer className="border-t border-slate-200 bg-white px-4 py-3 text-center text-xs text-slate-600">
+            Prototype only. AI-generated information is not a diagnosis. Final clinical decisions remain with a qualified healthcare professional.
+          </footer>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
